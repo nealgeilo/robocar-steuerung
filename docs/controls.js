@@ -17,10 +17,10 @@
 'use strict';
 
 const AUX_KANAELE = [
-  { name: 'KICK',  art: 'taster'   },   // AUX 1
-  { name: 'LICHT', art: 'schalter' },   // AUX 2
-  { name: 'ARM',   art: 'schieber' },   // AUX 3
-  { name: 'AUX 4', art: null       },   // AUX 4
+  { name: 'AUSKLAPPEN',  art: 'taster'   },   // AUX 1
+  { name: 'EINKLAPPEN', art: 'taster' },   // AUX 2
+  { name: 'KICK-LINKS',   art: 'taster' },   // AUX 3
+  { name: 'KICK-RECHTS', art: 'taster'       },   // AUX 4
 ];
 
 // Fahrmodi:
