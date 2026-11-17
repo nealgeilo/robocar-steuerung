@@ -35,93 +35,123 @@
  * Wichtig: Nirgends delay() verwenden! Sonst reagiert das Auto während
  * der Wartezeit nicht mehr auf das Handy.
  */
+
+
 #include "aux_user.h"
+/*
+ * aux_user.cpp – Zwei Klapparme mit Kick
+ *
+ * AUX 1 = Ausklappen  (beide Arme 0° -> 90°)
+ * AUX 2 = Einklappen  (beide Arme 90° -> 0°)
+ * AUX 3 = Kick links  (nur wenn ausgeklappt: 90° -> 180° -> 90°)
+ * AUX 4 = Kick rechts (nur wenn ausgeklappt: 90° -> 180° -> 90°)
+ *
+ * Servo links: Signal an GPIO 4 (D4), Servo rechts: Signal an GPIO 18 (D18).
+ * Strom (rot/braun) vom Step-down (5,0 V), OUT- mit GND am ESP32 verbinden.
+ */
 
-// 1 = Beispiel eingeschaltet, 0 = ausgeschaltet
-#define BEISPIEL_SERVO_KICKER 0   // Servo an GPIO 4, AUX 1 = Schuss
-#define BEISPIEL_LICHT        0   // LED an GPIO 16, AUX 2 = an/aus
+const int PIN_LINKS  = 4;
+const int PIN_RECHTS = 18;
 
-// "#if ... #endif": Der Code dazwischen wird nur mitübersetzt, wenn das
-// Beispiel oben auf 1 steht.
 
-// -------------------------------------------------------------------
-// Beispiel 1: Servo-Kicker an GPIO 4
-// Ein Servo bekommt alle 20 ms einen kurzen Puls. Die Länge des Pulses
-// bestimmt den Winkel: 1 ms = 0 Grad, 2 ms = 180 Grad.
-// -------------------------------------------------------------------
-#if BEISPIEL_SERVO_KICKER
-const int SERVO_PIN = 4;
-const int SERVO_RUHE_GRAD = 20;    // Kicker eingefahren
-const int SERVO_SCHUSS_GRAD = 120; // Kicker ausgefahren
+const bool RECHTS_SPIEGELN = false; //nur auf true setzen, wenn der der Servo "falsch" eingebaut ist, also um 180 grad drehen
 
-// Servo auf einen Winkel (0..180 Grad) stellen
-void servoGrad(int grad) {
-  grad = constrain(grad, 0, 180);
-  int pulsUs = 1000 + grad * 1000 / 180;          // Pulslänge 1000..2000 Mikrosekunden
-  int duty = (long)pulsUs * 16383 / 20000;        // in PWM-Wert umrechnen (14 Bit = 0..16383, 20 ms Takt)
-  ledcWrite(SERVO_PIN, duty);
+//Alle drei Winkel-Positionen
+const int GRAD_EIN  = 0;    // eingeklappt
+const int GRAD_AUS  = 90;   // ausgeklappt                                                                                            //Veränderbare Werte
+const int GRAD_KICK = 180;  // Kick
+
+const unsigned long KICK_DAUER_MS = 250;  // so lange bleibt der Arm in der "Kick-Stellung"
+
+// Pulslänge für 0° und 180°. Falls der Servo 180° nicht erreicht, MAX erhöhen
+const int PULS_MIN_US = 500;
+const int PULS_MAX_US = 2400;
+
+bool armeAus = false; //Sind die Arme ausgefahren?
+bool kickLinks = false; // Kickzustand?
+bool kickRechts = false; // Kickzustand?
+unsigned long kickLinksStart = 0;
+unsigned long kickRechtsStart = 0;
+uint8_t letzterWert[5] = {0, 0, 0, 0, 0};  // Index 1..4 = AUX 1..4 
+
+void servoGrad(int pin, int grad) {
+  grad = constrain(grad, 0, 180); // Begrenzt den Winkel auf 180 grad
+  int pulsUs = PULS_MIN_US + (long)grad * (PULS_MAX_US - PULS_MIN_US) / 180;
+  int duty = (long)pulsUs * 16383 / 20000; 
+  ledcWrite(pin, duty);
 }
-#endif
 
-// -------------------------------------------------------------------
-// Beispiel 2: LED (mit Vorwiderstand!) an GPIO 16
-// -------------------------------------------------------------------
-#if BEISPIEL_LICHT
-const int LICHT_PIN = 16;
-#endif
+void servoLinks(int grad) {
+  servoGrad(PIN_LINKS, grad);
+}
 
-// -------------------------------------------------------------------
-// Läuft einmal beim Einschalten: Pins einrichten, Startstellung
-// -------------------------------------------------------------------
+void servoRechts(int grad) {
+  if (RECHTS_SPIEGELN) grad = 180 - grad;
+  servoGrad(PIN_RECHTS, grad);
+}
+
 void userSetup() {
-#if BEISPIEL_SERVO_KICKER
-  ledcAttach(SERVO_PIN, 50, 14);   // PWM mit 50 Hz (= alle 20 ms), 14 Bit Auflösung
-  servoGrad(SERVO_RUHE_GRAD);
-#endif
-#if BEISPIEL_LICHT
-  pinMode(LICHT_PIN, OUTPUT);
-#endif
+  ledcAttach(PIN_LINKS, 50, 14);   
+  ledcAttach(PIN_RECHTS, 50, 14); // 50 Hz (alle 20 ms ein Puls)
+  servoLinks(GRAD_EIN);
+  servoRechts(GRAD_EIN);
 }
 
-// -------------------------------------------------------------------
-// Läuft, sobald sich ein AUX-Wert in der App ändert.
-//   kanal = 1..4 (welcher AUX-Kanal)
-//   wert  = 0..255
-// -------------------------------------------------------------------
 void onAux(uint8_t kanal, uint8_t wert) {
-  // Zum Ausprobieren: Werte im Seriellen Monitor anzeigen
   Serial.printf("AUX %u = %u\n", kanal, wert);
+  if (kanal < 1 || kanal > 4) return;
 
-#if BEISPIEL_SERVO_KICKER
-  if (kanal == 1) {
-    // wert > 127 heißt: Taste gedrückt (mehr als die Hälfte von 255)
-    servoGrad(wert > 127 ? SERVO_SCHUSS_GRAD : SERVO_RUHE_GRAD);
-  }
-#endif
 
-#if BEISPIEL_LICHT
-  if (kanal == 2) {
-    digitalWrite(LICHT_PIN, wert > 127 ? HIGH : LOW);
+  bool gedrueckt = (wert > 127) && (letzterWert[kanal] <= 127); //Regaiert bei Drücken, beim Loslassen wird die Funktion sofort beendet
+  letzterWert[kanal] = wert;
+  if (!gedrueckt) return; 
+
+  if (kanal == 1) {            // Ausklappen
+    armeAus = true;
+    kickLinks = false;
+    kickRechts = false;
+    servoLinks(GRAD_AUS);
+    servoRechts(GRAD_AUS);
   }
-#endif
+  else if (kanal == 2) {       // Einklappen
+    armeAus = false;
+    kickLinks = false;
+    kickRechts = false;
+    servoLinks(GRAD_EIN);
+    servoRechts(GRAD_EIN);
+  }
+  else if (kanal == 3) {       // Kick links
+    if (armeAus && !kickLinks) {
+      servoLinks(GRAD_KICK);
+      kickLinks = true;
+      kickLinksStart = millis();
+    }
+  }
+  else if (kanal == 4) {       // Kick rechts
+    if (armeAus && !kickRechts) {
+      servoRechts(GRAD_KICK);
+      kickRechts = true;
+      kickRechtsStart = millis();
+    }
+  }
 }
 
-// -------------------------------------------------------------------
-// Läuft ständig, alle 10 ms. Hier z. B. Sensoren abfragen oder etwas
-// zeitgesteuert ablaufen lassen (mit millis() statt delay()).
-// -------------------------------------------------------------------
-void userLoop() {
+void userLoop() { //Checkt ob sich der der Servo in "Kick" position befinden und ggf. zurücksetzt
+  if (kickLinks && millis() - kickLinksStart >= KICK_DAUER_MS) { 
+    servoLinks(GRAD_AUS);
+    kickLinks = false;
+  }
+  if (kickRechts && millis() - kickRechtsStart >= KICK_DAUER_MS) {
+    servoRechts(GRAD_AUS);
+    kickRechts = false;
+  }
 }
 
-// -------------------------------------------------------------------
-// Läuft, wenn die Verbindung zum Handy abbricht. Hier alles in einen
-// sicheren Zustand bringen (Kicker einfahren, Motoren aus ...).
-// -------------------------------------------------------------------
 void onFailsafe() {
-#if BEISPIEL_SERVO_KICKER
-  servoGrad(SERVO_RUHE_GRAD);
-#endif
-#if BEISPIEL_LICHT
-  digitalWrite(LICHT_PIN, LOW);
-#endif
+  //Wenn ein Kick beendet wurde, dann wird der Servo auf 90 Grad zurükcgesetzt und den Tastenwert auf 0
+  if (kickLinks)  servoLinks(GRAD_AUS);
+  if (kickRechts) servoRechts(GRAD_AUS);
+  kickLinks = false;
+  kickRechts = false;
+  letzterWert[1] = letzterWert[2] = letzterWert[3] = letzterWert[4] = 0;
 }
