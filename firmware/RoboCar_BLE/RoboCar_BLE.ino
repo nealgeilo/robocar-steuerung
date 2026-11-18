@@ -22,7 +22,7 @@
  *      und keine Sonderzeichen. Leerzeichen sind erlaubt.
  *    - Jedes Auto im Raum braucht einen anderen Namen!
  */
-#define AUTO_NAME ""
+#define AUTO_NAME "Manuel Neuer"
 
 /*
  *  Was brauche ich zum Hochladen?
